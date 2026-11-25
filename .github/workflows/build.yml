@@ -1,0 +1,60 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Initialize missing Flutter platform files
+        run: |
+          mkdir -p backup_files
+          cp -r lib backup_files/
+          cp pubspec.yaml backup_files/
+          cp -r android/app/src/main/kotlin backup_files/
+          cp -r android/app/src/main/cpp backup_files/
+          cp -r android/app/src/main/res backup_files/
+          cp android/app/src/main/AndroidManifest.xml backup_files/
+          flutter create --org com.autopilot --project-name autopilot_pro_gamer .
+          rm -rf lib/*
+          cp -r backup_files/lib/* lib/
+          cp backup_files/pubspec.yaml pubspec.yaml
+          mkdir -p android/app/src/main/kotlin
+          cp -r backup_files/kotlin/* android/app/src/main/kotlin/
+          cp -r backup_files/cpp android/app/src/main/
+          cp -r backup_files/res/* android/app/src/main/res/
+          cp backup_files/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          sed -i 's/AutopilotAccessibilityService/AutoTouchAccessibilityService/g' android/app/src/main/AndroidManifest.xml
+          if [ -f android/app/build.gradle.kts ]; then
+            echo 'android { externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } } }' >> android/app/build.gradle.kts
+          elif [ -f android/app/build.gradle ]; then
+            echo 'android { externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt" } } }' >> android/app/build.gradle
+          fi
+
+      - name: Get dependencies & Build APK
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pro-Gamer-AI-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
