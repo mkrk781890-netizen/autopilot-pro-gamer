@@ -131,7 +131,7 @@ class ScreenCaptureService : Service() {
         imageReader?.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
-                val plane = image.planes
+                val plane = image.planes[0]
                 nativeProcessFrame(
                     plane.buffer,
                     image.width,
