@@ -309,4 +309,251 @@ class AutoTouchAccessibilityService : AccessibilityService() {
 
     private fun seedDefaultFreeFireHud() {
         val defaults = listOf(
-            HudControlPoint(HudButton.JOYSTICK.id, 0.16f, 0.75f, 0.08f, 0.35f),
+    private fun loadHudMappingsForPackage(pkg: String) {
+        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        for (button in HudButton.values()) {
+            val prefix = "${pkg}_${button.key}"
+            if (prefs.contains("${prefix}_x") && prefs.contains("${prefix}_y")) {
+                val nx = prefs.getFloat("${prefix}_x", 0.5f)
+                val ny = prefs.getFloat("${prefix}_y", 0.5f)
+                val nr = prefs.getFloat("${prefix}_r", 0.04f)
+                val conf = prefs.getFloat("${prefix}_c", 0.75f)
+                hudCoordinates[button.id] = HudControlPoint(button.id, nx, ny, nr, conf)
+            }
+        }
+    }
+
+    private fun persistHudPoint(pkg: String, point: HudControlPoint) {
+        val button = HudButton.fromId(point.buttonId) ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefix = "${pkg}_${button.key}"
+        prefs.edit()
+            .putFloat("${prefix}_x", point.normX)
+            .putFloat("${prefix}_y", point.normY)
+            .putFloat("${prefix}_r", point.radiusNorm)
+            .putFloat("${prefix}_c", point.confidence)
+            .apply()
+    }
+
+    private fun scanWindowHierarchyForHudHints() {
+        val root = try {
+            rootInActiveWindow
+        } catch (_: Exception) {
+            null
+        } ?: return
+
+        try {
+            traverseNodeTree(root)
+        } finally {
+            @Suppress("DEPRECATION")
+            root.recycle()
+        }
+    }
+
+    private fun traverseNodeTree(node: AccessibilityNodeInfo) {
+        val desc = (node.contentDescription?.toString() ?: node.text?.toString() ?: "")
+            .lowercase()
+            .trim()
+        if (desc.isNotEmpty()) {
+            val matchedButton = matchLabelToHudButton(desc)
+            if (matchedButton != null) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (!rect.isEmpty && screenWidth > 0 && screenHeight > 0) {
+                    val normX = rect.exactCenterX() / screenWidth.toFloat()
+                    val normY = rect.exactCenterY() / screenHeight.toFloat()
+                    val radiusNorm = min(rect.width(), rect.height()) /
+                        (2f * min(screenWidth, screenHeight).toFloat())
+                    onNativeRegisterHudButton(
+                        buttonId = matchedButton.id,
+                        normX = normX,
+                        normY = normY,
+                        radiusNorm = radiusNorm,
+                        confidence = 0.90f
+                    )
+                }
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            try {
+                traverseNodeTree(child)
+            } finally {
+                @Suppress("DEPRECATION")
+                child.recycle()
+            }
+        }
+    }
+
+    private fun matchLabelToHudButton(label: String): HudButton? {
+        return when {
+            label.contains("fire") || label.contains("shoot") -> HudButton.FIRE
+            label.contains("jump") -> HudButton.JUMP
+            label.contains("crouch") -> HudButton.CROUCH
+            label.contains("prone") -> HudButton.PRONE
+            label.contains("scope") || label.contains("aim") -> HudButton.SCOPE
+            label.contains("gloo") || label.contains("shield") || label.contains("wall") ->
+                HudButton.GLOO_WALL
+            label.contains("medkit") || label.contains("heal") -> HudButton.MEDKIT
+            label.contains("inhaler") -> HudButton.INHALER
+            label.contains("sprint") || label.contains("run") -> HudButton.SPRINT
+            label.contains("reload") -> HudButton.RELOAD
+            else -> null
+        }
+    }
+
+    fun tapHudButton(buttonId: Int): Boolean {
+        val point = hudCoordinates[buttonId] ?: return false
+        val rng = ThreadLocalRandom.current()
+        val jitterRadiusPx = point.radiusNorm * min(screenWidth, screenHeight) * 0.32f
+        val x = clampScreenX(
+            point.normX * screenWidth + (rng.nextFloat() * 2f - 1f) * jitterRadiusPx
+        )
+        val y = clampScreenY(
+            point.normY * screenHeight + (rng.nextFloat() * 2f - 1f) * jitterRadiusPx
+        )
+        val duration = randomizeDuration(34L, 12L)
+
+        val path = Path().apply {
+            moveTo(x, y)
+            lineTo(
+                clampScreenX(x + rng.nextFloat() * 2.4f - 1.2f),
+                clampScreenY(y + rng.nextFloat() * 2.4f - 1.2f)
+            )
+        }
+
+        val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGestureSafely(gesture)
+    }
+
+    fun executeUpwardDragShot(
+        normStartX: Float,
+        normStartY: Float,
+        normDeltaY: Float,
+        normCurveBiasX: Float,
+        durationMs: Long
+    ): Boolean {
+        val firePoint = hudCoordinates[HudButton.FIRE.id]
+        val baseX = if (normStartX > 0f) normStartX else (firePoint?.normX ?: 0.84f)
+        val baseY = if (normStartY > 0f) normStartY else (firePoint?.normY ?: 0.72f)
+
+        val rng = ThreadLocalRandom.current()
+        val startX = clampScreenX(baseX * screenWidth + rng.nextFloat() * 6f - 3f)
+        val startY = clampScreenY(baseY * screenHeight + rng.nextFloat() * 6f - 3f)
+
+        val upwardPx = abs(normDeltaY).coerceIn(0.08f, 0.34f) * screenHeight
+        val lateralPx = normCurveBiasX.coerceIn(-0.14f, 0.14f) * screenWidth
+
+        val endX = clampScreenX(startX + lateralPx)
+        val endY = clampScreenY(startY - upwardPx)
+
+        val ctrl1X = clampScreenX(startX + lateralPx * 0.25f + (rng.nextFloat() * 10f - 5f))
+        val ctrl1Y = clampScreenY(startY - upwardPx * 0.42f)
+        val ctrl2X = clampScreenX(startX + lateralPx * 0.78f + (rng.nextFloat() * 8f - 4f))
+        val ctrl2Y = clampScreenY(startY - upwardPx * 0.86f)
+
+        val path = buildCubicBezierPath(
+            x0 = startX,
+            y0 = startY,
+            x1 = ctrl1X,
+            y1 = ctrl1Y,
+            x2 = ctrl2X,
+            y2 = ctrl2Y,
+            x3 = endX,
+            y3 = endY,
+            segments = 14,
+            microNoisePx = 1.6f
+        )
+
+        val naturalDuration = randomizeDuration(durationMs.coerceIn(55L, 180L), 10L)
+        val stroke = GestureDescription.StrokeDescription(path, 0L, naturalDuration)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGestureSafely(gesture)
+    }
+
+    fun executeActiveRecoilControl(
+        normStartX: Float,
+        normStartY: Float,
+        recoilStrength: Float,
+        weaponClass: Int,
+        durationMs: Long
+    ): Boolean {
+        val profile = weaponProfiles[weaponClass] ?: defaultProfile
+        val rng = ThreadLocalRandom.current()
+
+        val anchorX = if (normStartX > 0f) normStartX else 0.72f
+        val anchorY = if (normStartY > 0f) normStartY else 0.48f
+
+        val startX = clampScreenX(anchorX * screenWidth + (rng.nextFloat() * 4f - 2f))
+        val startY = clampScreenY(anchorY * screenHeight + (rng.nextFloat() * 4f - 2f))
+
+        val clampedStrength = recoilStrength.coerceIn(0.1f, 2.5f)
+        val totalPullDownPx = (0.045f * profile.sustainedPullRatio * clampedStrength) * screenHeight
+        val initialKickPx = totalPullDownPx * profile.verticalKickRatio
+        val swayPx = (profile.horizontalDriftRatio * clampedStrength * screenWidth) *
+            (if (rng.nextBoolean()) 1f else -1f)
+
+        val endX = clampScreenX(startX + swayPx)
+        val endY = clampScreenY(startY + totalPullDownPx)
+
+        val ctrl1X = clampScreenX(startX + swayPx * 0.15f)
+        val ctrl1Y = clampScreenY(startY + initialKickPx)
+        val ctrl2X = clampScreenX(startX + swayPx * 0.65f)
+        val ctrl2Y = clampScreenY(startY + totalPullDownPx * 0.75f)
+
+        val path = buildCubicBezierPath(
+            x0 = startX,
+            y0 = startY,
+            x1 = ctrl1X,
+            y1 = ctrl1Y,
+            x2 = ctrl2X,
+            y2 = ctrl2Y,
+            x3 = endX,
+            y3 = endY,
+            segments = 12,
+            microNoisePx = 1.2f
+        )
+
+        val targetDuration = if (durationMs > 0L) durationMs else profile.baseDurationMs
+        val naturalDuration = randomizeDuration(targetDuration.coerceIn(50L, 260L), 14L)
+        val stroke = GestureDescription.StrokeDescription(path, 0L, naturalDuration)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGestureSafely(gesture)
+    }
+
+    fun executeBezierSwipe(
+        normStartX: Float,
+        normStartY: Float,
+        normEndX: Float,
+        normEndY: Float,
+        durationMs: Long
+    ): Boolean {
+        val rng = ThreadLocalRandom.current()
+        val x0 = clampScreenX(normStartX * screenWidth)
+        val y0 = clampScreenY(normStartY * screenHeight)
+        val x3 = clampScreenX(normEndX * screenWidth)
+        val y3 = clampScreenY(normEndY * screenHeight)
+
+        val midOffsetX = (rng.nextFloat() * 2f - 1f) * (screenWidth * 0.018f)
+        val midOffsetY = (rng.nextFloat() * 2f - 1f) * (screenHeight * 0.018f)
+
+        val x1 = clampScreenX(x0 + (x3 - x0) * 0.33f + midOffsetX)
+        val y1 = clampScreenY(y0 + (y3 - y0) * 0.33f + midOffsetY)
+        val x2 = clampScreenX(x0 + (x3 - x0) * 0.67f - midOffsetX * 0.5f)
+        val y2 = clampScreenY(y0 + (y3 - y0) * 0.67f - midOffsetY * 0.5f)
+
+        val path = buildCubicBezierPath(x0, y0, x1, y1, x2, y2, x3, y3, 12, 1.4f)
+        val stroke = GestureDescription.StrokeDescription(
+            path,
+            0L,
+            randomizeDuration(durationMs.coerceIn(45L, 450L), 12L)
+        )
+        return dispatchGestureSafely(GestureDescription.Builder().addStroke(stroke).build())
+    }
+
+    fun executeSimultaneousCombo(
+        buttonIds: IntArray,
+        moveDirX: Float,
+        moveDirY: Float,
