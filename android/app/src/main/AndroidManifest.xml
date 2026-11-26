@@ -1,6 +1,5 @@
-
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://android.com"
+    xmlns:tools="http://android.com">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -54,7 +53,7 @@
             android:exported="false" />
 
         <service
-            android:name="com.autopilot.pro_gamer.AutopilotAccessibilityService"
+            android:name="com.autopilot.pro_gamer.AutoTouchAccessibilityService"
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -71,3 +70,4 @@
             android:value="2" />
     </application>
 </manifest>
+
