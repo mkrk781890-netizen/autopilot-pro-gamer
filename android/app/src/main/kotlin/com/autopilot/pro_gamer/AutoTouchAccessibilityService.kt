@@ -309,6 +309,26 @@ class AutoTouchAccessibilityService : AccessibilityService() {
 
     private fun seedDefaultFreeFireHud() {
         val defaults = listOf(
+            HudControlPoint(HudButton.FIRE.id, 0.85f, 0.72f, 0.055f, 0.50f),
+            HudControlPoint(HudButton.LEFT_FIRE.id, 0.14f, 0.45f, 0.045f, 0.50f),
+            HudControlPoint(HudButton.JUMP.id, 0.92f, 0.52f, 0.040f, 0.50f),
+            HudControlPoint(HudButton.CROUCH.id, 0.84f, 0.86f, 0.040f, 0.50f),
+            HudControlPoint(HudButton.PRONE.id, 0.75f, 0.88f, 0.035f, 0.50f),
+            HudControlPoint(HudButton.SCOPE.id, 0.92f, 0.36f, 0.040f, 0.50f),
+            HudControlPoint(HudButton.GLOO_WALL.id, 0.16f, 0.72f, 0.045f, 0.50f),
+            HudControlPoint(HudButton.MEDKIT.id, 0.25f, 0.86f, 0.035f, 0.50f),
+            HudControlPoint(HudButton.INHALER.id, 0.32f, 0.86f, 0.030f, 0.50f),
+            HudControlPoint(HudButton.SPRINT.id, 0.13f, 0.28f, 0.035f, 0.50f),
+            HudControlPoint(HudButton.RELOAD.id, 0.78f, 0.20f, 0.035f, 0.50f),
+            HudControlPoint(HudButton.SECONDARY_WEAPON.id, 0.85f, 0.14f, 0.045f, 0.50f),
+            HudControlPoint(HudButton.PRIMARY_WEAPON.id, 0.75f, 0.14f, 0.045f, 0.50f),
+            HudControlPoint(HudButton.JOYSTICK.id, 0.16f, 0.68f, 0.080f, 0.50f)
+        )
+        for (point in defaults) {
+            hudCoordinates.putIfAbsent(point.buttonId, point)
+        }
+    }
+
     private fun loadHudMappingsForPackage(pkg: String) {
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         for (button in HudButton.values()) {
@@ -530,30 +550,3 @@ class AutoTouchAccessibilityService : AccessibilityService() {
         normEndY: Float,
         durationMs: Long
     ): Boolean {
-        val rng = ThreadLocalRandom.current()
-        val x0 = clampScreenX(normStartX * screenWidth)
-        val y0 = clampScreenY(normStartY * screenHeight)
-        val x3 = clampScreenX(normEndX * screenWidth)
-        val y3 = clampScreenY(normEndY * screenHeight)
-
-        val midOffsetX = (rng.nextFloat() * 2f - 1f) * (screenWidth * 0.018f)
-        val midOffsetY = (rng.nextFloat() * 2f - 1f) * (screenHeight * 0.018f)
-
-        val x1 = clampScreenX(x0 + (x3 - x0) * 0.33f + midOffsetX)
-        val y1 = clampScreenY(y0 + (y3 - y0) * 0.33f + midOffsetY)
-        val x2 = clampScreenX(x0 + (x3 - x0) * 0.67f - midOffsetX * 0.5f)
-        val y2 = clampScreenY(y0 + (y3 - y0) * 0.67f - midOffsetY * 0.5f)
-
-        val path = buildCubicBezierPath(x0, y0, x1, y1, x2, y2, x3, y3, 12, 1.4f)
-        val stroke = GestureDescription.StrokeDescription(
-            path,
-            0L,
-            randomizeDuration(durationMs.coerceIn(45L, 450L), 12L)
-        )
-        return dispatchGestureSafely(GestureDescription.Builder().addStroke(stroke).build())
-    }
-
-    fun executeSimultaneousCombo(
-        buttonIds: IntArray,
-        moveDirX: Float,
-        moveDirY: Float,
