@@ -550,3 +550,185 @@ class AutoTouchAccessibilityService : AccessibilityService() {
         normEndY: Float,
         durationMs: Long
     ): Boolean {
+        val rng = ThreadLocalRandom.current()
+        val x0 = clampScreenX(normStartX * screenWidth)
+        val y0 = clampScreenY(normStartY * screenHeight)
+        val x3 = clampScreenX(normEndX * screenWidth)
+        val y3 = clampScreenY(normEndY * screenHeight)
+
+        val midOffsetX = (rng.nextFloat() * 2f - 1f) * (screenWidth * 0.018f)
+        val midOffsetY = (rng.nextFloat() * 2f - 1f) * (screenHeight * 0.018f)
+
+        val x1 = clampScreenX(x0 + (x3 - x0) * 0.33f + midOffsetX)
+        val y1 = clampScreenY(y0 + (y3 - y0) * 0.33f + midOffsetY)
+        val x2 = clampScreenX(x0 + (x3 - x0) * 0.67f - midOffsetX * 0.5f)
+        val y2 = clampScreenY(y0 + (y3 - y0) * 0.67f - midOffsetY * 0.5f)
+
+        val path = buildCubicBezierPath(x0, y0, x1, y1, x2, y2, x3, y3, 12, 1.4f)
+        val stroke = GestureDescription.StrokeDescription(
+            path,
+            0L,
+            randomizeDuration(durationMs.coerceIn(45L, 450L), 12L)
+        )
+        return dispatchGestureSafely(GestureDescription.Builder().addStroke(stroke).build())
+    }
+
+    fun executeSimultaneousCombo(
+        buttonIds: IntArray,
+        moveDirX: Float,
+        moveDirY: Float,
+        aimDeltaX: Float,
+        aimDeltaY: Float,
+        recoilStrength: Float,
+        weaponClass: Int
+    ): Boolean {
+        val builder = GestureDescription.Builder()
+        val rng = ThreadLocalRandom.current()
+        var strokeCount = 0
+        val maxStrokes = GestureDescription.getMaxStrokeCount().coerceAtMost(10)
+
+        for (id in buttonIds) {
+            if (strokeCount >= maxStrokes) break
+            val point = hudCoordinates[id] ?: continue
+            val jitter = point.radiusNorm * min(screenWidth, screenHeight) * 0.28f
+            val bx = clampScreenX(point.normX * screenWidth + (rng.nextFloat() * 2f - 1f) * jitter)
+            val by = clampScreenY(point.normY * screenHeight + (rng.nextFloat() * 2f - 1f) * jitter)
+
+            val tapPath = Path().apply {
+                moveTo(bx, by)
+                lineTo(clampScreenX(bx + 1f), clampScreenY(by + 1f))
+            }
+            val startDelay = (strokeCount * 8L).coerceAtMost(32L)
+            builder.addStroke(
+                GestureDescription.StrokeDescription(
+                    tapPath,
+                    startDelay,
+                    randomizeDuration(36L, 10L)
+                )
+            )
+            strokeCount++
+        }
+
+        if (strokeCount < maxStrokes && (abs(moveDirX) > 0.05f || abs(moveDirY) > 0.05f)) {
+            val joyPoint = hudCoordinates[HudButton.JOYSTICK.id]
+            val jx0 = clampScreenX((joyPoint?.normX ?: 0.16f) * screenWidth)
+            val jy0 = clampScreenY((joyPoint?.normY ?: 0.68f) * screenHeight)
+            val dragRadius = (joyPoint?.radiusNorm ?: 0.08f) * min(screenWidth, screenHeight)
+            val jx1 = clampScreenX(jx0 + moveDirX.coerceIn(-1f, 1f) * dragRadius)
+            val jy1 = clampScreenY(jy0 + moveDirY.coerceIn(-1f, 1f) * dragRadius)
+
+            val joyPath = Path().apply {
+                moveTo(jx0, jy0)
+                lineTo(jx1, jy1)
+            }
+            builder.addStroke(
+                GestureDescription.StrokeDescription(
+                    joyPath,
+                    0L,
+                    randomizeDuration(130L, 15L)
+                )
+            )
+            strokeCount++
+        }
+
+        if (strokeCount < maxStrokes && (abs(aimDeltaX) > 0.01f || abs(aimDeltaY) > 0.01f || recoilStrength > 0.05f)) {
+            val profile = weaponProfiles[weaponClass] ?: defaultProfile
+            val ax0 = clampScreenX(0.68f * screenWidth + (rng.nextFloat() * 6f - 3f))
+            val ay0 = clampScreenY(0.46f * screenHeight + (rng.nextFloat() * 6f - 3f))
+
+            val recoilPullPx = (0.04f * profile.sustainedPullRatio * recoilStrength.coerceIn(0f, 2.5f)) * screenHeight
+            val ax3 = clampScreenX(ax0 + aimDeltaX.coerceIn(-0.35f, 0.35f) * screenWidth)
+            val ay3 = clampScreenY(ay0 + aimDeltaY.coerceIn(-0.35f, 0.35f) * screenHeight + recoilPullPx)
+
+            val ax1 = clampScreenX(ax0 + (ax3 - ax0) * 0.35f)
+            val ay1 = clampScreenY(ay0 + (ay3 - ay0) * 0.35f)
+            val ax2 = clampScreenX(ax0 + (ax3 - ax0) * 0.70f)
+            val ay2 = clampScreenY(ay0 + (ay3 - ay0) * 0.70f)
+
+            val aimPath = buildCubicBezierPath(ax0, ay0, ax1, ay1, ax2, ay2, ax3, ay3, 10, 1.3f)
+            builder.addStroke(
+                GestureDescription.StrokeDescription(
+                    aimPath,
+                    0L,
+                    randomizeDuration(120L, 15L)
+                )
+            )
+            strokeCount++
+        }
+
+        if (strokeCount == 0) return false
+        return dispatchGestureSafely(builder.build())
+    }
+
+    private fun buildCubicBezierPath(
+        x0: Float,
+        y0: Float,
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        x3: Float,
+        y3: Float,
+        segments: Int,
+        microNoisePx: Float
+    ): Path {
+        val path = Path()
+        path.moveTo(x0, y0)
+        val rng = ThreadLocalRandom.current()
+        val steps = max(4, segments)
+
+        for (i in 1..steps) {
+            val t = i.toFloat() / steps.toFloat()
+            val invT = 1f - t
+            val b0 = invT.pow(3)
+            val b1 = 3f * invT.pow(2) * t
+            val b2 = 3f * invT * t.pow(2)
+            val b3 = t.pow(3)
+
+            val noiseX = if (i < steps) (rng.nextFloat() * 2f - 1f) * microNoisePx else 0f
+            val noiseY = if (i < steps) (rng.nextFloat() * 2f - 1f) * microNoisePx else 0f
+
+            val px = clampScreenX(b0 * x0 + b1 * x1 + b2 * x2 + b3 * x3 + noiseX)
+            val py = clampScreenY(b0 * y0 + b1 * y1 + b2 * y2 + b3 * y3 + noiseY)
+            path.lineTo(px, py)
+        }
+        return path
+    }
+
+    private fun dispatchGestureSafely(gesture: GestureDescription): Boolean {
+        val nowNs = System.nanoTime()
+        if (isGestureInFlight.get() && (nowNs - lastGestureDispatchNs) < 18_000_000L) {
+            return false
+        }
+
+        isGestureInFlight.set(true)
+        lastGestureDispatchNs = nowNs
+
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                isGestureInFlight.set(false)
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                isGestureInFlight.set(false)
+            }
+        }
+
+        return try {
+            dispatchGesture(gesture, callback, touchHandler)
+        } catch (_: Exception) {
+            isGestureInFlight.set(false)
+            false
+        }
+    }
+
+    private fun clampScreenX(x: Float): Float = x.coerceIn(1f, max(1f, screenWidth - 2f))
+
+    private fun clampScreenY(y: Float): Float = y.coerceIn(1f, max(1f, screenHeight - 2f))
+
+    private fun randomizeDuration(baseMs: Long, jitterMs: Long): Long {
+        val rng = ThreadLocalRandom.current()
+        val delta = if (jitterMs > 0L) rng.nextLong(-jitterMs, jitterMs + 1L) else 0L
+        return max(16L, baseMs + delta)
+    }
+}
