@@ -269,7 +269,7 @@ class AutoTouchAccessibilityService : AccessibilityService() {
                 scanWindowHierarchyForHudHints()
             }
         }
-    } hgh
+    }
 
     override fun onInterrupt() {
         isGestureInFlight.set(false)
